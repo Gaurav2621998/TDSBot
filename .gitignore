@@ -9,7 +9,7 @@ __pycache__/
 # Environment variables
 .env
 .env.local
-
+/backend/.env
 # Build outputs
 dist/
 build/

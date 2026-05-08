@@ -39,13 +39,45 @@ def init_db() -> None:
     """Initializes the Postgres database with required tables and seed data."""
     with db() as conn:
         with conn.cursor() as cur:
+            # Create users table first
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL,
                     email TEXT UNIQUE NOT NULL
                 );
-
+            """)
+            
+            # Ensure email column exists (for older versions of the table or existing Supabase schema)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
+            
+            # Try to migrate from user_email if it exists
+            cur.execute("""
+                DO $$ 
+                BEGIN 
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='user_email') THEN
+                        UPDATE users SET email = user_email WHERE email IS NULL;
+                    END IF;
+                END $$;
+            """)
+            
+            # Fill remaining nulls with unique values
+            cur.execute("UPDATE users SET email = 'demo' || id || '@example.com' WHERE email IS NULL")
+            
+            # Now add the unique constraint if not already present
+            cur.execute("""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_email_key') THEN
+                        ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);
+                    END IF;
+                END $$;
+            """)
+            
+            # Ensure NOT NULL
+            cur.execute("ALTER TABLE users ALTER COLUMN email SET NOT NULL")
+            
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS chats (
                     id SERIAL PRIMARY KEY,
                     user_id INTEGER,

@@ -10,7 +10,7 @@ ENV_PATH = BACKEND_DIR / ".env"
 
 
 def load_config() -> None:
-    load_dotenv(ENV_PATH, override=False)
+    load_dotenv(ENV_PATH, override=True)
 
 
 def get_setting(name: str, default: str | None = None) -> str | None:
