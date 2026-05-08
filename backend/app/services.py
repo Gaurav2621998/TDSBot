@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 
 from .classifier import classify_transaction, rank_rules
 from .config import get_setting, has_real_setting
-from .database import db, rows_to_dicts
+from .database import db, rows_to_dicts, pg_execute
 from .invoice import extract_invoice_fields
 from .schemas import Source
 
@@ -48,17 +48,17 @@ def get_runtime_config() -> dict[str, bool]:
 
 def get_rules() -> list[dict[str, Any]]:
     with db() as conn:
-        return rows_to_dicts(conn.execute("SELECT * FROM tds_rules").fetchall())
+        cur = pg_execute(conn, "SELECT * FROM tds_rules")
+        return rows_to_dicts(cur.fetchall())
 
 
 def get_documents(document_ids: list[int]) -> list[dict[str, Any]]:
     if not document_ids:
         return []
-    placeholders = ",".join("?" for _ in document_ids)
+    placeholders = ",".join("%s" for _ in document_ids)
     with db() as conn:
-        return rows_to_dicts(
-            conn.execute(f"SELECT * FROM documents WHERE id IN ({placeholders})", document_ids).fetchall()
-        )
+        cur = pg_execute(conn, f"SELECT * FROM documents WHERE id IN ({placeholders})", tuple(document_ids))
+        return rows_to_dicts(cur.fetchall())
 
 
 def create_chat_if_needed(chat_id: int | None, question: str) -> int:
@@ -66,8 +66,8 @@ def create_chat_if_needed(chat_id: int | None, question: str) -> int:
         return chat_id
     title = make_chat_title(question)
     with db() as conn:
-        cur = conn.execute("INSERT INTO chats (user_id, title) VALUES (?, ?)", (1, title))
-        return int(cur.lastrowid)
+        cur = pg_execute(conn, "INSERT INTO chats (user_id, title) VALUES (?, ?) RETURNING id", (1, title))
+        return int(cur.fetchone()["id"])
 
 
 def make_chat_title(question: str) -> str:
@@ -90,7 +90,7 @@ def make_chat_title(question: str) -> str:
 
 def save_message(chat_id: int, role: str, content: str, sources: list[Source] | None = None) -> None:
     with db() as conn:
-        conn.execute(
+        pg_execute(conn, 
             "INSERT INTO messages (chat_id, role, content, sources) VALUES (?, ?, ?, ?)",
             (chat_id, role, content, json.dumps([source.model_dump() for source in sources or []])),
         )
