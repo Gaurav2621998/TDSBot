@@ -1,0 +1,189 @@
+[
+  {
+    "return_code": "1005",
+    "old_section": "194D",
+    "new_section": "393(1) [Table: Sl. No. 1(i)]",
+    "nature_of_payment": "Commission or brokerage - insurance",
+    "rate": "2% for individual; 10% for others",
+    "threshold": "₹20,000",
+    "category": "insurance commission",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use applicable deductee status. Higher rate may apply if PAN is not furnished."
+  },
+  {
+    "return_code": "1006",
+    "old_section": "194H",
+    "new_section": "393(1) [Table: Sl. No. 1(ii)]",
+    "nature_of_payment": "Commission or brokerage - others",
+    "rate": "2%",
+    "threshold": "₹20,000",
+    "category": "commission or brokerage",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Applies to commission/brokerage other than insurance commission."
+  },
+  {
+    "return_code": "1008",
+    "old_section": "194I(a)",
+    "new_section": "393(1) [Table: Sl. No. 2(ii).D(a)]",
+    "nature_of_payment": "Rent on machinery etc. - specified person",
+    "rate": "2%",
+    "threshold": "₹50,000 per month",
+    "category": "rent",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use for machinery, plant or equipment rent."
+  },
+  {
+    "return_code": "1009",
+    "old_section": "194I(b)",
+    "new_section": "393(1) [Table: Sl. No. 2(ii).D(b)]",
+    "nature_of_payment": "Rent other than machinery etc. - specified person",
+    "rate": "10%",
+    "threshold": "₹50,000 per month",
+    "category": "rent",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use for land, building, furniture or fittings rent."
+  },
+  {
+    "return_code": "1019",
+    "old_section": "193",
+    "new_section": "393(1) [Table: Sl. No. 5(i)]",
+    "nature_of_payment": "Interest on securities",
+    "rate": "10%",
+    "threshold": "₹10,000",
+    "category": "interest",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Applies to interest on securities."
+  },
+  {
+    "return_code": "1020",
+    "old_section": "194A",
+    "new_section": "393(1) [Table: Sl. No. 5(ii).D(a)]",
+    "nature_of_payment": "Interest other than securities - senior citizen",
+    "rate": "10%",
+    "threshold": "₹1,00,000",
+    "category": "interest",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use when deductee/payee is a senior citizen."
+  },
+  {
+    "return_code": "1021",
+    "old_section": "194A",
+    "new_section": "393(1) [Table: Sl. No. 5(ii).D(b)]",
+    "nature_of_payment": "Interest other than securities - non-senior citizen",
+    "rate": "10%",
+    "threshold": "₹50,000",
+    "category": "interest",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use when deductee/payee is not a senior citizen."
+  },
+  {
+    "return_code": "1023",
+    "old_section": "194C",
+    "new_section": "393(1) [Table: Sl. No. 6(i).D(a)]",
+    "nature_of_payment": "Contract payment including supply of labour - contractor is individual/HUF",
+    "rate": "1% for individual/HUF; 2% for others",
+    "threshold": "₹30,000 single payment; ₹1,00,000 aggregate",
+    "category": "contractor payment",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Classify works contracts and labour supply here when not professional or technical fees."
+  },
+  {
+    "return_code": "1026",
+    "old_section": "194J(a)",
+    "new_section": "393(1) [Table: Sl. No. 6(iii).D(a)]",
+    "nature_of_payment": "Fees for technical services, certain royalty, or call centre payments",
+    "rate": "2%",
+    "threshold": "₹50,000",
+    "category": "technical services",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use for technical services, non-professional FTS, certain royalty, and call centre business."
+  },
+  {
+    "return_code": "1027",
+    "old_section": "194J(b)",
+    "new_section": "393(1) [Table: Sl. No. 6(iii).D(b)]",
+    "nature_of_payment": "Fees for professional services",
+    "rate": "10%",
+    "threshold": "₹50,000",
+    "category": "professional fees",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use for legal, medical, engineering, architectural, accountancy, consultancy and similar professional services."
+  },
+  {
+    "return_code": "1028",
+    "old_section": "194J(b)",
+    "new_section": "393(1) [Table: Sl. No. 6(iii).D(b)]",
+    "nature_of_payment": "Director remuneration, fees or commission other than salary",
+    "rate": "10%",
+    "threshold": "No threshold",
+    "category": "professional fees",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Use for director payments not deductible as salary under section 392."
+  },
+  {
+    "return_code": "1031",
+    "old_section": "194Q",
+    "new_section": "393(1) [Table: Sl. No. 8(ii)]",
+    "nature_of_payment": "Purchase of goods",
+    "rate": "0.1%",
+    "threshold": "Amount exceeding ₹50 lakh",
+    "category": "purchase of goods",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Applies subject to statutory buyer/seller conditions. Higher rate may apply if PAN is not furnished."
+  },
+  {
+    "return_code": "1035",
+    "old_section": "194O",
+    "new_section": "393(1) [Table: Sl. No. 8(v)]",
+    "nature_of_payment": "Sale of goods or services by e-commerce participant through e-commerce operator",
+    "rate": "0.1%",
+    "threshold": "₹5 lakh for individual/HUF",
+    "category": "e-commerce transaction",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Applies to e-commerce operator payments/credits to participants."
+  },
+  {
+    "return_code": "1057",
+    "old_section": "195",
+    "new_section": "393(2) [Table: Sl. No. 17]",
+    "nature_of_payment": "Foreign payment: interest or other sum chargeable, excluding salary",
+    "rate": "Average rate as applicable",
+    "threshold": "As applicable",
+    "category": "non-resident/foreign payment",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "Treaty, DTAA, residency, chargeability and lower/nil withholding certificates must be verified."
+  },
+  {
+    "return_code": "1068",
+    "old_section": "206C-A",
+    "new_section": "394(1) [Table: Sl. No. 1]",
+    "nature_of_payment": "Sale of alcoholic liquor for human consumption",
+    "rate": "2%",
+    "threshold": "As applicable",
+    "category": "TCS applicable sale category",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "TCS category."
+  },
+  {
+    "return_code": "1073",
+    "old_section": "206C-E",
+    "new_section": "394(1) [Table: Sl. No. 4]",
+    "nature_of_payment": "Sale of scrap",
+    "rate": "2%",
+    "threshold": "As applicable",
+    "category": "TCS applicable sale category",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "TCS category."
+  },
+  {
+    "return_code": "1075",
+    "old_section": "206C-L",
+    "new_section": "394(1) [Table: Sl. No. 6.D(a)]",
+    "nature_of_payment": "Sale consideration exceeding threshold in case of sale of motor vehicle",
+    "rate": "1%",
+    "threshold": "As applicable under motor vehicle TCS provisions",
+    "category": "TCS applicable sale category",
+    "source_url": "https://blog.tdsman.com/2026/03/tds-tcs-rate-chart-fy-2026-27/",
+    "notes": "TCS category; verify vehicle value threshold and exceptions."
+  }
+]
