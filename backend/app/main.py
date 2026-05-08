@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import load_config
@@ -16,6 +16,7 @@ from .services import answer_question, create_chat_if_needed, fetch_url_text, ge
 load_config()
 
 app = FastAPI(title="TDSBot API", version="0.1.0")
+api_router = APIRouter(prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,17 +35,17 @@ def startup() -> None:
         print(f"CRITICAL: Startup initialization failed: {e}")
 
 
-@app.get("/health")
+@api_router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/config")
+@api_router.get("/config")
 def config() -> dict[str, bool]:
     return get_runtime_config()
 
 
-@app.post("/chat", response_model=ChatResponse)
+@api_router.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest) -> ChatResponse:
     chat_id = create_chat_if_needed(payload.chat_id, payload.question)
     save_message(chat_id, "user", payload.question)
@@ -59,7 +60,7 @@ async def chat(payload: ChatRequest) -> ChatResponse:
     )
 
 
-@app.post("/upload-pdf", response_model=UploadResponse)
+@api_router.post("/upload-pdf", response_model=UploadResponse)
 async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -105,7 +106,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
     return UploadResponse(document_id=document_id, invoice=invoice, extracted_text_preview=text[:1200])
 
 
-@app.post("/add-url", response_model=UrlResponse)
+@api_router.post("/add-url", response_model=UrlResponse)
 async def add_url(payload: UrlRequest) -> UrlResponse:
     try:
         fetched_title, text = await fetch_url_text(payload.url)
@@ -124,14 +125,14 @@ async def add_url(payload: UrlRequest) -> UrlResponse:
     return UrlResponse(document_id=document_id, title=title, extracted_text_preview=text[:1200])
 
 
-@app.get("/chats")
+@api_router.get("/chats")
 def chats() -> list[dict]:
     with db() as conn:
         cur = pg_execute(conn, "SELECT * FROM chats ORDER BY created_at DESC")
         return rows_to_dicts(cur.fetchall())
 
 
-@app.delete("/chats")
+@api_router.delete("/chats")
 def clear_chats() -> dict[str, str]:
     with db() as conn:
         pg_execute(conn, "DELETE FROM messages")
@@ -139,15 +140,17 @@ def clear_chats() -> dict[str, str]:
     return {"status": "cleared"}
 
 
-@app.get("/chats/{chat_id}")
+@api_router.get("/chats/{chat_id}")
 def chat_detail(chat_id: int) -> dict:
     with db() as conn:
         cur = pg_execute(conn, "SELECT * FROM chats WHERE id = ?", (chat_id,))
         chat_row = cur.fetchone()
         if not chat_row:
-            raise HTTPException(status_code=404, detail="Chat not found.")
+            raise HTTPException(status_code=404, detail="Chat find not found.")
         cur_msg = pg_execute(conn, "SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC", (chat_id,))
         messages = rows_to_dicts(cur_msg.fetchall())
     for message in messages:
         message["sources"] = json.loads(message.get("sources") or "[]")
     return {"chat": dict(chat_row), "messages": messages}
+
+app.include_router(api_router)

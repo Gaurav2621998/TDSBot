@@ -1,13 +1,13 @@
 {
   "functions": {
-    "backend/index.py": {
-      "runtime": "vercel-python@0.1.0"
+    "api/index.py": {
+      "runtime": "python"
     }
   },
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/backend/index.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/(.*)",
@@ -15,3 +15,4 @@
     }
   ]
 }
+
