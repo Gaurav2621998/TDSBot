@@ -1,2 +1,2 @@
 # TDSBot
-Bot that answers TDS related queries.
+Bot that answers TDS related queries
