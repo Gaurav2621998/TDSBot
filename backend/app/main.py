@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import load_config
 from .database import supabase
 from .invoice import extract_invoice_fields, extract_pdf_text
-from .schemas import ChatRequest, ChatResponse, UploadResponse, UrlRequest, UrlResponse
+from .schemas import ChatRequest, ChatResponse, SupportRequest, UploadResponse, UrlRequest, UrlResponse
 from .services import answer_question, create_chat_if_needed, fetch_url_text, get_runtime_config, save_message
 
 load_config()
@@ -45,15 +45,26 @@ def config() -> dict[str, bool]:
 async def chat(payload: ChatRequest) -> ChatResponse:
     chat_id = create_chat_if_needed(payload.chat_id, payload.question)
     save_message(chat_id, "user", payload.question)
-    answer, sources, confidence, matched_rule = await answer_question(payload.question, payload.document_ids, chat_id)
-    save_message(chat_id, "assistant", answer, sources)
+    answer, sources, confidence, matched_rule, support_eligible = await answer_question(payload.question, payload.document_ids, chat_id)
+    save_message(chat_id, "assistant", answer, sources, support_eligible)
     return ChatResponse(
         chat_id=chat_id,
         answer=answer,
         sources=sources,
         confidence=confidence,
         matched_rule=matched_rule,
+        support_eligible=support_eligible,
     )
+
+
+@app.post("/support")
+async def submit_support(payload: SupportRequest) -> dict[str, str]:
+    supabase.table("support_queries").insert({
+        "chat_id": payload.chat_id,
+        "question": payload.question,
+        "status": "pending"
+    }).execute()
+    return {"status": "success", "message": "Your query has been submitted for expert review."}
 
 
 @app.post("/upload-pdf", response_model=UploadResponse)

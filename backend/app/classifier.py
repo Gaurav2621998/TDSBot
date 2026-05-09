@@ -61,8 +61,9 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "support services",
         "managed service",
         "call centre",
-        "royalty",
         "engineering service",
+        "fts",
+        "fees for technical",
     ],
     "rent": ["rent", "lease", "premises", "office space", "warehouse", "machinery rent"],
     "commission or brokerage": ["commission", "brokerage", "agent", "referral fee"],
@@ -70,8 +71,11 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "salary": ["salary", "wages", "payroll", "employee"],
     "insurance commission": ["insurance commission", "insurance brokerage"],
     "e-commerce transaction": ["ecommerce", "e-commerce", "marketplace", "online platform"],
-    "non-resident/foreign payment": ["non resident", "non-resident", "foreign", "overseas", "import service", "195"],
+    "non-resident/foreign payment": ["non resident", "non-resident", "foreign", "overseas", "import service", "195", "foreign entity", "foreign company", "nri", "royalty to", "payment to nri", "payment abroad"],
     "TCS applicable sale category": ["tcs", "scrap", "motor vehicle", "liquor", "timber", "coal", "lignite", "iron ore"],
+    "purchase of property": ["immovable property", "land", "building", "flat", "house", "plot"],
+    "winnings": ["lottery", "crossword", "card game", "gambling", "betting", "horse race", "online game", "winnings"],
+    "other payments": ["other payment", "miscellaneous", "general", "residual"],
 }
 
 PURCHASE_PATTERNS = [
@@ -141,9 +145,21 @@ def classify_transaction(text: str) -> tuple[str | None, float, list[str]]:
     return category, confidence, hits.get(category, [])
 
 
-def rank_rules(question: str, rules: list[dict[str, Any]], document_text: str = "") -> list[tuple[dict[str, Any], float]]:
-    combined = f"{question}\n{document_text}"
-    category, category_confidence, hits = classify_transaction(combined)
+def rank_rules(
+    question: str, 
+    rules: list[dict[str, Any]], 
+    document_text: str = "", 
+    pre_category: str | None = None,
+    pre_confidence: float = 0.0
+) -> list[tuple[dict[str, Any], float]]:
+    combined = f"{question}\n{document_text[:5000]}"  # Limit doc text for ranking overlap
+    category, category_confidence, hits = classify_transaction(question) # Classify only on QUESTION
+    
+    # Use pre-calculated classification if provided (e.g. from LLM)
+    if pre_category:
+        category = pre_category
+        category_confidence = pre_confidence
+
     query_terms = set(re.findall(r"[a-z0-9]+", normalize(combined)))
     ranked: list[tuple[dict[str, Any], float]] = []
     for rule in rules:

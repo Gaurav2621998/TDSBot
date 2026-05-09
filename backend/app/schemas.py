@@ -24,6 +24,12 @@ class ChatResponse(BaseModel):
     sources: list[Source]
     confidence: str
     matched_rule: dict[str, Any] | None = None
+    support_eligible: bool = False
+
+
+class SupportRequest(BaseModel):
+    chat_id: int
+    question: str
 
 
 class UrlRequest(BaseModel):

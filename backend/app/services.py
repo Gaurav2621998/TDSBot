@@ -41,6 +41,7 @@ ALLOWED_CATEGORIES = [
 def get_runtime_config() -> dict[str, bool]:
     return {
         "groq_enabled": has_real_setting("GROQ_API_KEY"),
+        "tavily_enabled": has_real_setting("TAVILY_API_KEY"),
         "serpapi_enabled": has_real_setting("SERPAPI_API_KEY"),
         "google_custom_search_enabled": has_real_setting("GOOGLE_API_KEY") and has_real_setting("GOOGLE_CSE_ID"),
     }
@@ -57,6 +58,39 @@ def get_documents(document_ids: list[int]) -> list[dict[str, Any]]:
     res = supabase.table("documents").select("*").in_("id", document_ids).execute()
     return res.data
 
+
+def get_default_references() -> list[dict[str, Any]]:
+    """Always loads all default_reference documents (seeded expert knowledge) from Supabase."""
+    res = supabase.table("documents").select("*").eq("type", "default_reference").execute()
+    return res.data or []
+
+
+def get_relevant_qa_pairs(question: str, top_n: int = 5) -> str:
+    """Returns the top N most relevant QA pairs from the training dataset via keyword overlap."""
+    import json as _json
+    from pathlib import Path as _Path
+    qa_path = _Path(__file__).parent / "data" / "tds_qa_training_dataset-(1).json"
+    if not qa_path.exists():
+        return ""
+    try:
+        data = _json.loads(qa_path.read_text(encoding="utf-8"))
+        qa_pairs = data.get("qa_pairs", [])
+    except Exception:
+        return ""
+    q_words = set(re.findall(r"\b\w{3,}\b", question.lower()))
+    scored = []
+    for pair in qa_pairs:
+        text = (pair.get("question", "") + " " + pair.get("answer", "")).lower()
+        overlap = len(q_words & set(re.findall(r"\b\w{3,}\b", text)))
+        if overlap > 0:
+            scored.append((overlap, pair))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    if not scored:
+        return ""
+    lines = []
+    for _, pair in scored[:top_n]:
+        lines.append(f"Q: {pair['question']}\nA: {pair['answer']}")
+    return "\n\n".join(lines)
 
 def create_chat_if_needed(chat_id: int | None, question: str) -> int:
     if chat_id:
@@ -84,28 +118,33 @@ def make_chat_title(question: str) -> str:
     return cleaned[:52]
 
 
-def save_message(chat_id: int, role: str, content: str, sources: list[Source] | None = None) -> None:
+def save_message(chat_id: int, role: str, content: str, sources: list[Source] | None = None, support_eligible: bool = False) -> None:
     supabase.table("messages").insert({
         "chat_id": chat_id,
         "role": role,
         "content": content,
-        "sources": json.dumps([source.model_dump() for source in sources or []])
+        "sources": json.dumps([s.dict() for s in sources]) if sources else None,
+        "support_eligible": support_eligible
     }).execute()
 
 
 async def fetch_url_text(url: str) -> tuple[str, str]:
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        response = await client.get(url, headers={"User-Agent": "TDSBot/1.0"})
-        response.raise_for_status()
-    content_type = response.headers.get("content-type", "")
-    if "pdf" in content_type:
-        return url.rsplit("/", 1)[-1] or "PDF reference", response.text
-    soup = BeautifulSoup(response.text, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "header"]):
-        tag.decompose()
-    title = soup.title.get_text(" ", strip=True) if soup.title else url
-    text = re.sub(r"\n{3,}", "\n\n", soup.get_text("\n", strip=True))
-    return title, text[:120000]
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            response = await client.get(url, headers={"User-Agent": "TDSBot/1.0"})
+            response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if "pdf" in content_type:
+            return url.rsplit("/", 1)[-1] or "PDF reference", response.text
+        soup = BeautifulSoup(response.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        title = soup.title.get_text(" ", strip=True) if soup.title else url
+        text = re.sub(r"\n{3,}", "\n\n", soup.get_text("\n", strip=True))
+        return title, text[:120000]
+    except Exception as e:
+        print(f"Error fetching URL {url}: {e}")
+        return url, ""
 
 
 def trusted_search_query(question: str) -> str:
@@ -124,9 +163,13 @@ async def google_custom_search(question: str) -> list[Source]:
         "q": trusted_search_query(question),
         "num": 5,
     }
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
-        response.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
+            response.raise_for_status()
+    except Exception as e:
+        print(f"Google Search failed: {e}")
+        return []
     sources: list[Source] = []
     for result in response.json().get("items", [])[:5]:
         link = result.get("link")
@@ -149,10 +192,14 @@ async def serpapi_search(question: str) -> list[Source]:
         return []
     query = trusted_search_query(question)
     params = {"engine": "google", "q": query, "api_key": api_key, "num": 5}
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get("https://serpapi.com/search.json", params=params)
-        response.raise_for_status()
-    data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get("https://serpapi.com/search.json", params=params)
+            response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        print(f"SerpApi Search failed: {e}")
+        return []
     sources: list[Source] = []
     for result in data.get("organic_results", [])[:5]:
         link = result.get("link")
@@ -169,84 +216,144 @@ async def serpapi_search(question: str) -> list[Source]:
     return sources
 
 
+async def tavily_search(question: str) -> list[Source]:
+    api_key = get_setting("TAVILY_API_KEY")
+    if not api_key:
+        return []
+    query = trusted_search_query(question)
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "search_depth": "basic",
+        "max_results": 5,
+        "include_domains": TRUSTED_DOMAINS
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post("https://api.tavily.com/search", json=payload)
+            response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        print(f"Tavily Search failed: {e}")
+        return []
+    sources: list[Source] = []
+    for result in data.get("results", [])[:5]:
+        link = result.get("url")
+        if not link:
+            continue
+        sources.append(
+            Source(
+                title=result.get("title") or link,
+                url=link,
+                type="web_search",
+                snippet=result.get("content"),
+            )
+        )
+    return sources
+
+
 async def web_search(question: str) -> tuple[list[Source], str | None]:
     config = get_runtime_config()
+    sources: list[Source] = []
+
+    # Priority 1: Tavily (1000 searches/mo)
+    if config["tavily_enabled"]:
+        sources = await tavily_search(question)
+        if sources:
+            return sources, None
+
+    # Priority 2: Google Custom Search
     if config["google_custom_search_enabled"]:
-        try:
-            return await google_custom_search(question), None
-        except Exception as exc:
-            if not config["serpapi_enabled"]:
-                return [], f"Google Custom Search failed: {exc}"
+        sources = await google_custom_search(question)
+        if sources:
+            return sources, None
 
+    # Priority 3: SerpApi
     if config["serpapi_enabled"]:
-        try:
-            return await serpapi_search(question), None
-        except Exception as exc:
-            return [], f"SerpAPI search failed: {exc}"
+        sources = await serpapi_search(question)
+        if sources:
+            return sources, None
 
-    return [], "Web search is not configured. Set GOOGLE_API_KEY and GOOGLE_CSE_ID, or set SERPAPI_API_KEY."
+    return [], "No results found from web search."
 
 
-async def groq_refine(question: str, draft: str, context: str) -> str:
+async def groq_refine(question: str, draft: str, context: str, matching_rules: str = "", qa_examples: str = "") -> str:
     api_key = get_setting("GROQ_API_KEY")
     if not api_key:
         return draft
     model = get_setting("GROQ_MODEL", "llama-3.3-70b-versatile")
-    prompt = f"""
-You are a cautious Indian TDS/TCS assistant. Rewrite the draft answer for clarity only.
-Return only the final answer. Do not add a preamble such as "Rewritten answer" or commentary about rewriting.
-Keep the same level of detail as the draft. If the draft is concise, keep it concise and professional.
-If the draft has detailed headings, preserve the headings and do not remove required details.
-Do not add tax rates, sections, thresholds, or codes unless they are present in the supplied draft/context.
-If the source support is weak, preserve the uncertainty.
 
-Question:
-{question}
+    system_prompt = """You are a senior Indian TDS/TCS tax expert under the Income Tax Act, 2025.
+
+DEFAULT: Give CONCISE answers. Use this compact format for every response unless the user explicitly asks to explain or elaborate:
+
+[One sentence describing the transaction]
+Return code: XXXX | Old section: XXX | New section: XXX [Sl. X]
+Rate: X% | Threshold: ₹X | Form: XXX | Deductee: Resident/Non-resident
+[One line of notes if relevant]
+
+MANDATORY RULES:
+1. ALWAYS include the 4-digit return code (e.g. 1009).
+2. ALWAYS include new section reference AND old section.
+3. ALWAYS state rate, threshold, return form, deductee category.
+4. For transactions on/after 1 April 2026 → NEW section + return code.
+5. For transactions before 1 April 2026 → OLD section only.
+6. NEVER invent codes or rates. Only use provided knowledge base.
+7. If multiple codes apply, list each on its own line.
+8. If user says 'explain', 'detail', 'why', 'elaborate' → expand with full reasoning."""
+
+    if matching_rules:
+        system_prompt += f"\n\nRELEVANT RETURN CODES FROM KNOWLEDGE BASE:\n{matching_rules}"
+    if qa_examples:
+        system_prompt += f"\n\nFEW-SHOT REFERENCE EXAMPLES (for accuracy):\n{qa_examples}"
+
+    prompt = f"""Question: {question}
 
 Source context:
-{context[:6000]}
+{context[:4000]}
 
-Draft answer:
-{draft}
-"""
+Draft answer (rewrite using mandatory rules above):
+{draft}"""
+
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You produce source-grounded Indian TDS/TCS answers and never invent rates."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.1,
     }
-    async with httpx.AsyncClient(timeout=35) as client:
-        response = await client.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
-        )
-        response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"].strip()
+    try:
+        async with httpx.AsyncClient(timeout=35) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Error calling Groq API: {e}")
+        return draft
 
 
 def wants_detailed_answer(question: str) -> bool:
+    """Returns True only when user explicitly asks for a detailed/explained answer."""
     normalized = question.lower()
-    detail_terms = [
+    explicit_detail_terms = [
         "detail",
         "detailed",
-        "brief",
         "explain",
         "explanation",
-        "reason",
-        "reasoning",
         "why",
-        "condition",
-        "conditions",
-        "exception",
-        "threshold",
-        "slab",
         "all details",
-        "full",
+        "full details",
+        "elaborate",
+        "in detail",
+        "break down",
+        "walk me through",
     ]
-    return any(term in normalized for term in detail_terms)
+    return any(term in normalized for term in explicit_detail_terms)
 
 
 async def groq_classify_transaction(question: str, document_text: str) -> tuple[str | None, str | None]:
@@ -415,12 +522,41 @@ def choose_rule_for_category(category: str, rules: list[dict[str, Any]], context
         if "securities" in normalized:
             return next((rule for rule in candidates if "securities" in rule["nature_of_payment"].lower()), candidates[0])
         return next((rule for rule in candidates if "non-senior" in rule["nature_of_payment"].lower()), candidates[0])
+    if category == "non-resident/foreign payment":
+        # Royalty, technical fees, general payments to NR → residual code 1057 (Section 195 replacement)
+        if any(w in normalized for w in ["royalty", "technical fee", "professional", "interest on loan", "general"]):
+            residual = next((r for r in candidates if r["return_code"] == "1057"), None)
+            if residual:
+                return residual
+        # Interest on bonds / infrastructure debt → specific codes
+        if "bond" in normalized or "infrastructure debt" in normalized:
+            return next((r for r in candidates if r["return_code"] in ("1040", "1044")), candidates[0])
+        # Default NR fallback: 1057 residual
+        return next((r for r in candidates if r["return_code"] == "1057"), candidates[0])
+
     return candidates[0]
 
 
 def direct_rule_matches(question: str, rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = question.lower()
     matches: list[dict[str, Any]] = []
+
+    # Form number lookup: "what is form 144" → return all rules that use Form 144
+    form_match = re.search(r"\bform\s+(\d+)\b", normalized)
+    if form_match:
+        form_str = f"form {form_match.group(1)}"
+        form_hits = [r for r in rules if form_str in (r.get("notes") or "").lower()]
+        if form_hits:
+            return form_hits[:10]
+
+    # Foreign + royalty → force residual NR code 1057
+    is_foreign = any(w in normalized for w in ["foreign", "non-resident", "non resident", "overseas", "nri", "abroad"])
+    is_royalty_or_general = any(w in normalized for w in ["royalty", "payment abroad", "general nr"])
+    if is_foreign and is_royalty_or_general:
+        residual = next((r for r in rules if r["return_code"] == "1057"), None)
+        if residual:
+            matches.append(residual)
+
     for rule in rules:
         old_section = rule["old_section"].lower()
         return_code = rule["return_code"].lower()
@@ -443,6 +579,7 @@ def direct_rule_matches(question: str, rules: list[dict[str, Any]]) -> list[dict
             unique.append(rule)
             seen.add(rule["id"])
     return unique
+
 
 
 def build_direct_rule_answer(question: str, matches: list[dict[str, Any]], sources: list[Source], detailed: bool) -> str:
@@ -529,11 +666,24 @@ Conditions/exceptions: {matched_rule.get("notes") or "Apply statutory conditions
 Reasoning: {source_note} {f"Transaction understood as: {transaction_summary}. " if transaction_summary else ""}{f"Extracted document facts: {document_summary}. " if document_summary else ""}The payment description maps to "{matched_rule["category"]}", which matches the TDSMAN FY 2026-27 rule for "{matched_rule["nature_of_payment"]}". Confidence: {confidence}."""
 
 
-async def answer_question(question: str, document_ids: list[int], chat_id: int | None = None) -> tuple[str, list[Source], str, dict[str, Any] | None]:
-    documents = get_documents(document_ids)
-    document_text = "\n\n".join(doc["extracted_text"] for doc in documents)
-    doc_summary, doc_evidence = document_fact_summary(documents)
-    
+async def answer_question(question: str, document_ids: list[int], chat_id: int | None = None) -> tuple[str, list[Source], str, dict[str, Any] | None, bool]:
+    # Load user-selected docs + always-on default references
+    user_docs = get_documents(document_ids)
+    default_docs = get_default_references()
+    # Default references come first; user-uploaded docs override/append
+    all_default_ids = {d["id"] for d in default_docs}
+    extra_user_docs = [d for d in user_docs if d["id"] not in all_default_ids]
+    documents = default_docs + extra_user_docs
+
+    # Separate invoice/user docs from reference docs for display purposes
+    reference_docs_text = "\n\n".join(
+        doc["extracted_text"] for doc in default_docs
+    )
+    user_doc_text = "\n\n".join(doc["extracted_text"] for doc in extra_user_docs)
+    document_text = (user_doc_text + "\n\n" + reference_docs_text).strip()
+
+    doc_summary, doc_evidence = document_fact_summary(extra_user_docs)  # summary only from user-uploaded
+
     chat_context = ""
     if chat_id:
         msg_res = supabase.table("messages").select("role, content").eq("chat_id", chat_id).order("created_at").execute()
@@ -542,24 +692,35 @@ async def answer_question(question: str, document_ids: list[int], chat_id: int |
         if history_to_use:
             formatted_history = "\n".join([f"{m['role'].capitalize()}: {m['content']}" for m in history_to_use])
             chat_context = f"Previous conversation context:\n{formatted_history}\n\n"
-            
+
     contextual_question = f"{chat_context}Current question: {question}" if chat_context else question
     detailed = wants_detailed_answer(contextual_question)
-    classification, cls_score, _ = classify_transaction(f"{contextual_question}\n{document_text}")
+
+    # Get relevant QA pairs for few-shot prompting
+    qa_examples = get_relevant_qa_pairs(contextual_question)
+
+    classification, cls_score, _ = classify_transaction(f"{contextual_question}\n{user_doc_text}")
     rules = get_rules()
+
+    # Build a formatted string of top matching rules for the LLM
     direct_matches = direct_rule_matches(contextual_question, rules)
-    if direct_matches and not document_text.strip():
+    matching_rules_str = "\n".join(
+        f"Code {r['return_code']} | {r['old_section']} → {r['new_section']} | {r['nature_of_payment']} | Rate: {r['rate']} | Threshold: {r['threshold']} | {r.get('notes', '')}"
+        for r in direct_matches[:8]
+    ) if direct_matches else ""
+
+    if direct_matches and not user_doc_text.strip():
         sources = [
             Source(
-                title="TDSMAN TDS/TCS Rate Chart FY 2026-27",
+                title="TDS/TCS Rate Chart FY 2026-27 + Act 2025",
                 url=direct_matches[0]["source_url"],
                 type="default_reference",
                 snippet="Direct section/code lookup",
             )
         ]
         draft = build_direct_rule_answer(question, direct_matches, sources, detailed)
-        return await groq_refine(contextual_question, draft, json.dumps(direct_matches, ensure_ascii=False)), sources, "high", direct_matches[0]
-    ranked = rank_rules(contextual_question, rules, document_text)
+        return await groq_refine(contextual_question, draft, json.dumps(direct_matches, ensure_ascii=False), matching_rules_str, qa_examples), sources, "high", direct_matches[0], False
+    ranked = rank_rules(contextual_question, rules, user_doc_text, classification, cls_score)
     best_rule, score = ranked[0] if ranked else (None, 0)
     llm_reasoning = None
     transaction_summary = None
@@ -597,10 +758,10 @@ async def answer_question(question: str, document_ids: list[int], chat_id: int |
     if best_rule and score >= 0.35:
         sources.append(
             Source(
-                title="TDSMAN TDS/TCS Rate Chart FY 2026-27",
+                title="TDS/TCS Rate Chart FY 2026-27 + Act 2025",
                 url=best_rule["source_url"],
                 type="default_reference",
-                snippet=f'{best_rule["old_section"]} | {best_rule["new_section"]} | {best_rule["rate"]}',
+                snippet=f'{best_rule["return_code"]} | {best_rule["old_section"]} → {best_rule["new_section"]} | {best_rule["rate"]}',
             )
         )
         draft = build_answer(
@@ -614,8 +775,8 @@ async def answer_question(question: str, document_ids: list[int], chat_id: int |
             document_summary=doc_summary.replace("\n", "; ")[:1200] if doc_summary else None,
             detailed=detailed,
         )
-        context = document_text + "\n" + json.dumps(best_rule, ensure_ascii=False)
-        return await groq_refine(contextual_question, draft, context), sources, confidence, best_rule
+        context = user_doc_text + "\n" + json.dumps(best_rule, ensure_ascii=False)
+        return await groq_refine(contextual_question, draft, context, matching_rules_str, qa_examples), sources, confidence, best_rule, False
 
     web_sources, search_error = await web_search(contextual_question)
     if web_sources:
@@ -623,6 +784,11 @@ async def answer_question(question: str, document_ids: list[int], chat_id: int |
         source_note = "I could not find this in the uploaded/reference documents, so I checked online sources."
     elif search_error:
         source_note = f"{source_note} {search_error}"
+        
+    support_eligible = not bool(web_sources)
+    if support_eligible:
+        source_note += " No direct match found. You can submit this query to our tax experts for manual review."
+
     draft = build_answer(
         question,
         None,
@@ -634,4 +800,5 @@ async def answer_question(question: str, document_ids: list[int], chat_id: int |
         document_summary=doc_summary.replace("\n", "; ")[:1200] if doc_summary else None,
         detailed=detailed or confidence == "low",
     )
-    return await groq_refine(contextual_question, draft, "\n".join(source.snippet or "" for source in sources)), sources, "low", None
+    final_answer = await groq_refine(contextual_question, draft, "\n".join(source.snippet or "" for source in sources), matching_rules_str, qa_examples)
+    return final_answer, sources, "low", None, support_eligible
