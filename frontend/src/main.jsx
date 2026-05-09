@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, FileUp, Link, Paperclip, Plus, Send, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, FileUp, Link, Paperclip, Plus, Send, Sparkles, Trash2, Upload, X, Moon, Sun } from 'lucide-react';
 import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
@@ -62,6 +62,19 @@ function App() {
   const [notice, setNotice] = useState('');
   const [config, setConfig] = useState(null);
   const scrollRef = useRef(null);
+
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('theme') || 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme((current) => (current === 'light' ? 'dark' : 'light'));
+  }
 
   const documentIds = useMemo(
     () => [...referenceDocuments, ...questionAttachments].map((doc) => doc.id),
@@ -280,8 +293,22 @@ function App() {
             <h1>Financial/TDS Answering Bot</h1>
             <p>Grounded on uploaded invoices, reference URLs, and the TDSMAN FY 2026-27 chart.</p>
           </div>
-          <div className="status">
-            {config?.google_custom_search_enabled || config?.serpapi_enabled ? 'Web search on' : 'Web search off'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div className="status">
+              {config?.google_custom_search_enabled || config?.serpapi_enabled ? 'Web search on' : 'Web search off'}
+            </div>
+            <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme" style={{ 
+              background: theme === 'dark' ? '#21262d' : '#e8eef3', 
+              border: `1px solid ${theme === 'dark' ? '#30363d' : '#cdd8e0'}`, 
+              borderRadius: '8px',
+              padding: '8px',
+              cursor: 'pointer', 
+              display: 'grid', 
+              placeItems: 'center', 
+              color: theme === 'dark' ? '#c9d1d9' : '#17202a' 
+            }}>
+              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
           </div>
         </header>
 
