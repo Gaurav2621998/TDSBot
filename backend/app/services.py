@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 
 from .classifier import classify_transaction, rank_rules
 from .config import get_setting, has_real_setting
-from .database import db, rows_to_dicts, pg_execute
+from .database import supabase
 from .invoice import extract_invoice_fields
 from .schemas import Source
 
@@ -47,27 +47,23 @@ def get_runtime_config() -> dict[str, bool]:
 
 
 def get_rules() -> list[dict[str, Any]]:
-    with db() as conn:
-        cur = pg_execute(conn, "SELECT * FROM tds_rules")
-        return rows_to_dicts(cur.fetchall())
+    res = supabase.table("tds_rules").select("*").execute()
+    return res.data
 
 
 def get_documents(document_ids: list[int]) -> list[dict[str, Any]]:
     if not document_ids:
         return []
-    placeholders = ",".join("%s" for _ in document_ids)
-    with db() as conn:
-        cur = pg_execute(conn, f"SELECT * FROM documents WHERE id IN ({placeholders})", tuple(document_ids))
-        return rows_to_dicts(cur.fetchall())
+    res = supabase.table("documents").select("*").in_("id", document_ids).execute()
+    return res.data
 
 
 def create_chat_if_needed(chat_id: int | None, question: str) -> int:
     if chat_id:
         return chat_id
     title = make_chat_title(question)
-    with db() as conn:
-        cur = pg_execute(conn, "INSERT INTO chats (user_id, title) VALUES (?, ?) RETURNING id", (1, title))
-        return int(cur.fetchone()["id"])
+    res = supabase.table("chats").insert({"user_id": 101, "title": title}).execute()
+    return res.data[0]["id"]
 
 
 def make_chat_title(question: str) -> str:
@@ -89,11 +85,12 @@ def make_chat_title(question: str) -> str:
 
 
 def save_message(chat_id: int, role: str, content: str, sources: list[Source] | None = None) -> None:
-    with db() as conn:
-        pg_execute(conn, 
-            "INSERT INTO messages (chat_id, role, content, sources) VALUES (?, ?, ?, ?)",
-            (chat_id, role, content, json.dumps([source.model_dump() for source in sources or []])),
-        )
+    supabase.table("messages").insert({
+        "chat_id": chat_id,
+        "role": role,
+        "content": content,
+        "sources": json.dumps([source.model_dump() for source in sources or []])
+    }).execute()
 
 
 async def fetch_url_text(url: str) -> tuple[str, str]:
@@ -449,7 +446,7 @@ def direct_rule_matches(question: str, rules: list[dict[str, Any]]) -> list[dict
 
 
 def build_direct_rule_answer(question: str, matches: list[dict[str, Any]], sources: list[Source], detailed: bool) -> str:
-    source_lines = "\n".join(f"- {source.title}: {source.url or 'uploaded document'}" for source in sources)
+    source_lines = "\n".join(f"- {source.url or 'uploaded document'}" for source in sources)
     rows = "\n".join(
         (
             f"- {rule['nature_of_payment']}: old Section {rule['old_section']}; "
@@ -461,11 +458,7 @@ def build_direct_rule_answer(question: str, matches: list[dict[str, Any]], sourc
     classification = matches[0]["category"] if len({rule["category"] for rule in matches}) == 1 else "Multiple rules under the requested section/code"
     if not detailed and len(matches) == 1:
         rule = matches[0]
-        return f"""{rule['nature_of_payment']} is covered under old Section {rule['old_section']} and new Section {rule['new_section']}. The return code is {rule['return_code']}, the TDS/TCS rate is {rule['rate']}, and the threshold is {rule['threshold']}. {rule.get('notes') or 'Apply statutory conditions and exceptions.'}
-
-Source: {sources[0].title} ({sources[0].url})
-
-This is informational guidance only; please verify before deduction or filing."""
+        return f"""{rule['nature_of_payment']} is covered under old Section {rule['old_section']} and new Section {rule['new_section']}. The return code is {rule['return_code']}, the TDS/TCS rate is {rule['rate']}, and the threshold is {rule['threshold']}. {rule.get('notes') or 'Apply statutory conditions and exceptions.'}"""
     if not detailed:
         compact_rows = "\n".join(
             f"- {rule['nature_of_payment']}: Section {rule['old_section']}, code {rule['return_code']}, rate {rule['rate']}, threshold {rule['threshold']}"
@@ -473,11 +466,7 @@ This is informational guidance only; please verify before deduction or filing.""
         )
         return f"""I found {len(matches)} possible rows for this section/code. Please choose the row matching the actual nature of payment:
 
-{compact_rows}
-
-Source: {sources[0].title} ({sources[0].url})
-
-This is informational guidance only; please verify before deduction or filing."""
+{compact_rows}"""
     return f"""Short answer: I found {len(matches)} matching TDS/TCS rule{'s' if len(matches) != 1 else ''} for your section/code query. Where a section has multiple rates, use the row matching the actual nature of payment.
 
 Transaction classification: {classification}
@@ -488,11 +477,7 @@ TDS/TCS rate: {", ".join(sorted({rule["rate"] for rule in matches}))}
 Threshold: {", ".join(sorted({rule["threshold"] for rule in matches}))}
 Conditions/exceptions: Match the nature of payment to the correct row. Details:
 {rows}
-Reasoning: I treated your question as a direct section/code lookup and returned the matching structured FY 2026-27 rule rows instead of forcing a single transaction classification.
-Sources:
-{source_lines}
-
-Disclaimer: This is informational guidance only. Verify the facts, thresholds, PAN status, residency, exceptions and current law with a tax professional before filing or deduction."""
+Reasoning: I treated your question as a direct section/code lookup and returned the matching structured FY 2026-27 rule rows instead of forcing a single transaction classification."""
 
 
 def build_answer(
@@ -511,14 +496,12 @@ def build_answer(
         "exceptions and current law with a tax professional before filing or deduction."
     )
     if not matched_rule:
-        source_lines = "\n".join(f"- {source.title}: {source.url or 'uploaded document'}" for source in sources) or "- No source found"
+        source_lines = "\n".join(f"- {source.url or 'uploaded document'}" for source in sources) or "- No source found"
         if not detailed:
             context_sentence = f" I understood the transaction as {transaction_summary}." if transaction_summary else ""
             return f"""I could not identify a confident TDS/TCS rule from the available references.{context_sentence} Please provide the nature of payment, vendor/service description, amount, and whether the payee is resident/non-resident so I can classify it reliably.
 
-Source status: {source_note}
-
-This is informational guidance only; please verify before deduction or filing."""
+Source status: {source_note}"""
         return f"""Short answer: I could not identify a confident TDS/TCS rule from the available references.
 
 Transaction classification: {classification or "Unclear"}
@@ -528,20 +511,12 @@ Return code/section code: Not determined
 TDS/TCS rate: Not determined
 Threshold: Not determined
 Conditions/exceptions: Verification required because no confident source-backed match was found.
-Reasoning: {source_note} {f"Transaction understood as: {transaction_summary}. " if transaction_summary else ""}{f"Extracted document facts: {document_summary}. " if document_summary else ""}The query did not match the structured FY 2026-27 rules strongly enough.
-Sources:
-{source_lines}
+Reasoning: {source_note} {f"Transaction understood as: {transaction_summary}. " if transaction_summary else ""}{f"Extracted document facts: {document_summary}. " if document_summary else ""}The query did not match the structured FY 2026-27 rules strongly enough."""
 
-{disclaimer}"""
-
-    source_lines = "\n".join(f"- {source.title}: {source.url or 'uploaded document'}" for source in sources)
+    source_lines = "\n".join(f"- {source.url or 'uploaded document'}" for source in sources)
     if not detailed:
         summary = transaction_summary or matched_rule["nature_of_payment"]
-        return f"""{summary} is generally classified as {classification or matched_rule['category']}. The applicable old section is {matched_rule['old_section']} and the new section is {matched_rule['new_section']}. The return code is {matched_rule['return_code']}, the TDS/TCS rate is {matched_rule['rate']}, and the threshold is {matched_rule['threshold']}. {matched_rule.get('notes') or 'Apply statutory conditions and exceptions.'}
-
-Source: TDSMAN TDS/TCS Rate Chart FY 2026-27 ({matched_rule['source_url']})
-
-This is informational guidance only; please verify before deduction or filing."""
+        return f"""{summary} is generally classified as {classification or matched_rule['category']}. The applicable old section is {matched_rule['old_section']} and the new section is {matched_rule['new_section']}. The return code is {matched_rule['return_code']}, the TDS/TCS rate is {matched_rule['rate']}, and the threshold is {matched_rule['threshold']}. {matched_rule.get('notes') or 'Apply statutory conditions and exceptions.'}"""
     return f"""Short answer: {matched_rule["nature_of_payment"]} is generally covered under old Section {matched_rule["old_section"]}, new Section {matched_rule["new_section"]}, return code {matched_rule["return_code"]}, at {matched_rule["rate"]}, subject to the threshold and conditions below.
 
 Transaction classification: {classification or matched_rule["category"]}
@@ -551,21 +526,28 @@ Return code/section code: {matched_rule["return_code"]}
 TDS/TCS rate: {matched_rule["rate"]}
 Threshold: {matched_rule["threshold"]}
 Conditions/exceptions: {matched_rule.get("notes") or "Apply statutory conditions and exceptions."}
-Reasoning: {source_note} {f"Transaction understood as: {transaction_summary}. " if transaction_summary else ""}{f"Extracted document facts: {document_summary}. " if document_summary else ""}The payment description maps to "{matched_rule["category"]}", which matches the TDSMAN FY 2026-27 rule for "{matched_rule["nature_of_payment"]}". Confidence: {confidence}.
-Sources:
-{source_lines}
-
-{disclaimer}"""
+Reasoning: {source_note} {f"Transaction understood as: {transaction_summary}. " if transaction_summary else ""}{f"Extracted document facts: {document_summary}. " if document_summary else ""}The payment description maps to "{matched_rule["category"]}", which matches the TDSMAN FY 2026-27 rule for "{matched_rule["nature_of_payment"]}". Confidence: {confidence}."""
 
 
-async def answer_question(question: str, document_ids: list[int]) -> tuple[str, list[Source], str, dict[str, Any] | None]:
+async def answer_question(question: str, document_ids: list[int], chat_id: int | None = None) -> tuple[str, list[Source], str, dict[str, Any] | None]:
     documents = get_documents(document_ids)
     document_text = "\n\n".join(doc["extracted_text"] for doc in documents)
     doc_summary, doc_evidence = document_fact_summary(documents)
-    detailed = wants_detailed_answer(question)
-    classification, cls_score, _ = classify_transaction(f"{question}\n{document_text}")
+    
+    chat_context = ""
+    if chat_id:
+        msg_res = supabase.table("messages").select("role, content").eq("chat_id", chat_id).order("created_at").execute()
+        history = msg_res.data
+        history_to_use = history[:-1][-6:] if len(history) > 1 else []
+        if history_to_use:
+            formatted_history = "\n".join([f"{m['role'].capitalize()}: {m['content']}" for m in history_to_use])
+            chat_context = f"Previous conversation context:\n{formatted_history}\n\n"
+            
+    contextual_question = f"{chat_context}Current question: {question}" if chat_context else question
+    detailed = wants_detailed_answer(contextual_question)
+    classification, cls_score, _ = classify_transaction(f"{contextual_question}\n{document_text}")
     rules = get_rules()
-    direct_matches = direct_rule_matches(question, rules)
+    direct_matches = direct_rule_matches(contextual_question, rules)
     if direct_matches and not document_text.strip():
         sources = [
             Source(
@@ -576,27 +558,27 @@ async def answer_question(question: str, document_ids: list[int]) -> tuple[str, 
             )
         ]
         draft = build_direct_rule_answer(question, direct_matches, sources, detailed)
-        return await groq_refine(question, draft, json.dumps(direct_matches, ensure_ascii=False)), sources, "high", direct_matches[0]
-    ranked = rank_rules(question, rules, document_text)
+        return await groq_refine(contextual_question, draft, json.dumps(direct_matches, ensure_ascii=False)), sources, "high", direct_matches[0]
+    ranked = rank_rules(contextual_question, rules, document_text)
     best_rule, score = ranked[0] if ranked else (None, 0)
     llm_reasoning = None
     transaction_summary = None
     analysis = None
     if get_runtime_config()["groq_enabled"]:
-        analysis = await groq_analyze_transaction(question, document_text, doc_summary)
+        analysis = await groq_analyze_transaction(contextual_question, document_text, doc_summary)
     if analysis and analysis.get("category"):
         classification = analysis["category"]
         llm_reasoning = analysis.get("reasoning")
         transaction_summary = analysis.get("transaction_summary")
-        selected_rule = choose_rule_for_category(classification, rules, f"{question}\n{doc_summary}\n{document_text}")
+        selected_rule = choose_rule_for_category(classification, rules, f"{contextual_question}\n{doc_summary}\n{document_text}")
         if selected_rule:
             best_rule = selected_rule
             score = 0.82 if analysis.get("confidence") == "high" else 0.62
     elif score < 0.35 and get_runtime_config()["groq_enabled"]:
-        llm_category, llm_reasoning = await groq_classify_transaction(question, document_text)
+        llm_category, llm_reasoning = await groq_classify_transaction(contextual_question, document_text)
         if llm_category:
             classification = llm_category
-            selected_rule = choose_rule_for_category(llm_category, rules, f"{question}\n{doc_summary}\n{document_text}")
+            selected_rule = choose_rule_for_category(llm_category, rules, f"{contextual_question}\n{doc_summary}\n{document_text}")
             if selected_rule:
                 best_rule = selected_rule
                 score = 0.62
@@ -633,9 +615,9 @@ async def answer_question(question: str, document_ids: list[int]) -> tuple[str, 
             detailed=detailed,
         )
         context = document_text + "\n" + json.dumps(best_rule, ensure_ascii=False)
-        return await groq_refine(question, draft, context), sources, confidence, best_rule
+        return await groq_refine(contextual_question, draft, context), sources, confidence, best_rule
 
-    web_sources, search_error = await web_search(question)
+    web_sources, search_error = await web_search(contextual_question)
     if web_sources:
         sources.extend(web_sources)
         source_note = "I could not find this in the uploaded/reference documents, so I checked online sources."
@@ -652,4 +634,4 @@ async def answer_question(question: str, document_ids: list[int]) -> tuple[str, 
         document_summary=doc_summary.replace("\n", "; ")[:1200] if doc_summary else None,
         detailed=detailed or confidence == "low",
     )
-    return await groq_refine(question, draft, "\n".join(source.snippet or "" for source in sources)), sources, "low", None
+    return await groq_refine(contextual_question, draft, "\n".join(source.snippet or "" for source in sources)), sources, "low", None

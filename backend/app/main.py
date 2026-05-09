@@ -4,11 +4,11 @@ import json
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, APIRouter
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import load_config
-from .database import db, init_db, rows_to_dicts, pg_execute
+from .database import supabase
 from .invoice import extract_invoice_fields, extract_pdf_text
 from .schemas import ChatRequest, ChatResponse, UploadResponse, UrlRequest, UrlResponse
 from .services import answer_question, create_chat_if_needed, fetch_url_text, get_runtime_config, save_message
@@ -16,11 +16,10 @@ from .services import answer_question, create_chat_if_needed, fetch_url_text, ge
 load_config()
 
 app = FastAPI(title="TDSBot API", version="0.1.0")
-api_router = APIRouter(prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all for production Vercel
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,27 +28,24 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    try:
-        init_db()
-    except Exception as e:
-        print(f"CRITICAL: Startup initialization failed: {e}")
+    pass
 
 
-@api_router.get("/health")
+@app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@api_router.get("/config")
+@app.get("/config")
 def config() -> dict[str, bool]:
     return get_runtime_config()
 
 
-@api_router.post("/chat", response_model=ChatResponse)
+@app.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest) -> ChatResponse:
     chat_id = create_chat_if_needed(payload.chat_id, payload.question)
     save_message(chat_id, "user", payload.question)
-    answer, sources, confidence, matched_rule = await answer_question(payload.question, payload.document_ids)
+    answer, sources, confidence, matched_rule = await answer_question(payload.question, payload.document_ids, chat_id)
     save_message(chat_id, "assistant", answer, sources)
     return ChatResponse(
         chat_id=chat_id,
@@ -60,7 +56,7 @@ async def chat(payload: ChatRequest) -> ChatResponse:
     )
 
 
-@api_router.post("/upload-pdf", response_model=UploadResponse)
+@app.post("/upload-pdf", response_model=UploadResponse)
 async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -74,83 +70,72 @@ async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
     if not text.strip():
         raise HTTPException(status_code=422, detail="No extractable text found in the PDF.")
     invoice = extract_invoice_fields(text)
-    with db() as conn:
-        cur = pg_execute(conn, 
-            """
-            INSERT INTO documents (user_id, type, title, source_url, extracted_text)
-            VALUES (?, ?, ?, ?, ?) RETURNING id
-            """,
-            (1, "pdf", file.filename, None, text),
-        )
-        document_id = int(cur.fetchone()["id"])
-        pg_execute(conn, 
-            """
-            INSERT INTO invoice_extractions (
-                document_id, vendor_name, invoice_number, invoice_date,
-                amount, gst_details, party_details, items_json, extracted_text
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                document_id,
-                invoice.get("vendor_name"),
-                invoice.get("invoice_number"),
-                invoice.get("invoice_date"),
-                invoice.get("amount"),
-                invoice.get("gst_details"),
-                invoice.get("party_details"),
-                invoice.get("items_json"),
-                text,
-            ),
-        )
+    doc_res = supabase.table("documents").insert({
+        "user_id": 101,
+        "type": "pdf",
+        "title": file.filename,
+        "source_url": None,
+        "extracted_text": text
+    }).execute()
+    document_id = doc_res.data[0]["id"]
+    
+    supabase.table("invoice_extractions").insert({
+        "document_id": document_id,
+        "vendor_name": invoice.get("vendor_name"),
+        "invoice_number": invoice.get("invoice_number"),
+        "invoice_date": invoice.get("invoice_date"),
+        "amount": invoice.get("amount"),
+        "gst_details": invoice.get("gst_details"),
+        "party_details": invoice.get("party_details"),
+        "items_json": invoice.get("items_json"),
+        "extracted_text": text
+    }).execute()
+    
     invoice["document_id"] = document_id
     return UploadResponse(document_id=document_id, invoice=invoice, extracted_text_preview=text[:1200])
 
 
-@api_router.post("/add-url", response_model=UrlResponse)
+@app.post("/add-url", response_model=UrlResponse)
 async def add_url(payload: UrlRequest) -> UrlResponse:
     try:
         fetched_title, text = await fetch_url_text(payload.url)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not fetch URL: {exc}") from exc
     title = payload.title or fetched_title
-    with db() as conn:
-        cur = pg_execute(conn, 
-            """
-            INSERT INTO documents (user_id, type, title, source_url, extracted_text)
-            VALUES (?, ?, ?, ?, ?) RETURNING id
-            """,
-            (1, "url", title, payload.url, text),
-        )
-        document_id = int(cur.fetchone()["id"])
+    doc_res = supabase.table("documents").insert({
+        "user_id": 101,
+        "type": "url",
+        "title": title,
+        "source_url": payload.url,
+        "extracted_text": text
+    }).execute()
+    document_id = doc_res.data[0]["id"]
     return UrlResponse(document_id=document_id, title=title, extracted_text_preview=text[:1200])
 
 
-@api_router.get("/chats")
+@app.get("/chats")
 def chats() -> list[dict]:
-    with db() as conn:
-        cur = pg_execute(conn, "SELECT * FROM chats ORDER BY created_at DESC")
-        return rows_to_dicts(cur.fetchall())
+    res = supabase.table("chats").select("*").order("created_at", desc=True).execute()
+    return res.data
 
 
-@api_router.delete("/chats")
+@app.delete("/chats")
 def clear_chats() -> dict[str, str]:
-    with db() as conn:
-        pg_execute(conn, "DELETE FROM messages")
-        pg_execute(conn, "DELETE FROM chats")
+    # Delete all messages and chats for simplicity. Supabase REST doesn't support TRUNCATE easily without RPC.
+    supabase.table("messages").delete().neq("id", 0).execute()
+    supabase.table("chats").delete().neq("id", 0).execute()
     return {"status": "cleared"}
 
 
-@api_router.get("/chats/{chat_id}")
+@app.get("/chats/{chat_id}")
 def chat_detail(chat_id: int) -> dict:
-    with db() as conn:
-        cur = pg_execute(conn, "SELECT * FROM chats WHERE id = ?", (chat_id,))
-        chat_row = cur.fetchone()
-        if not chat_row:
-            raise HTTPException(status_code=404, detail="Chat find not found.")
-        cur_msg = pg_execute(conn, "SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC", (chat_id,))
-        messages = rows_to_dicts(cur_msg.fetchall())
+    chat_res = supabase.table("chats").select("*").eq("id", chat_id).execute()
+    if not chat_res.data:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    
+    msg_res = supabase.table("messages").select("*").eq("chat_id", chat_id).order("created_at").order("id").execute()
+    messages = msg_res.data
+    
     for message in messages:
         message["sources"] = json.loads(message.get("sources") or "[]")
-    return {"chat": dict(chat_row), "messages": messages}
-
-app.include_router(api_router)
+    return {"chat": chat_res.data[0], "messages": messages}
