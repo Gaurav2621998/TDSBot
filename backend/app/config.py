@@ -14,7 +14,8 @@ def load_config() -> None:
 
 
 def get_setting(name: str, default: str | None = None) -> str | None:
-    return os.getenv(name, default)
+    val = os.getenv(name, default)
+    return val.strip() if isinstance(val, str) else val
 
 
 def has_real_setting(name: str) -> bool:
