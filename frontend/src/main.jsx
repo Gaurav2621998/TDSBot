@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, FileUp, Link, Paperclip, Plus, Send, Sparkles, Trash2, Upload, X, Moon, Sun } from 'lucide-react';
+import { AlertCircle, FileUp, Link, Paperclip, Plus, Send, Sparkles, Trash2, Upload, X, Moon, Sun, LifeBuoy, CheckCircle2 } from 'lucide-react';
 import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
@@ -28,7 +28,7 @@ function SourceList({ sources }) {
   );
 }
 
-function Message({ message }) {
+function Message({ message, onSupport }) {
   const isUser = message.role === 'user';
   return (
     <article className={`message ${isUser ? 'user' : 'assistant'}`}>
@@ -38,6 +38,18 @@ function Message({ message }) {
           <p key={index}>{line}</p>
         ))}
         <SourceList sources={message.sources} />
+        {message.support_eligible && !message.support_submitted && (
+          <div className="support-escalation">
+            <button className="support-button" onClick={() => onSupport(message)}>
+              <LifeBuoy size={14} /> Submit to Expert for Review
+            </button>
+          </div>
+        )}
+        {message.support_submitted && (
+          <div className="support-submitted">
+            <CheckCircle2 size={14} /> Submitted for expert review
+          </div>
+        )}
       </div>
     </article>
   );
@@ -102,7 +114,7 @@ function App() {
     if (!trimmed || loading) return;
     const attachedNames = questionAttachments.map((doc) => doc.title);
     setQuestion('');
-    setLoading(true);
+    setLoading('chat');
     setNotice('');
     setMessages((current) => [
       ...current,
@@ -123,7 +135,13 @@ function App() {
       setChatId(data.chat_id);
       setMessages((current) => [
         ...current,
-        { role: 'assistant', content: data.answer, sources: data.sources || [] },
+        { 
+          role: 'assistant', 
+          content: data.answer, 
+          sources: data.sources || [],
+          support_eligible: data.support_eligible,
+          original_question: trimmed
+        },
       ]);
       setQuestionAttachments([]);
       fetch(`${API_BASE}/chats`)
@@ -144,11 +162,29 @@ function App() {
     }
   }
 
+  async function submitToSupport(message) {
+    if (!chatId || !message.original_question) return;
+    try {
+      const response = await fetch(`${API_BASE}/support`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, question: message.original_question }),
+      });
+      if (response.ok) {
+        setMessages(current => current.map(msg => 
+          msg === message ? { ...msg, support_submitted: true } : msg
+        ));
+      }
+    } catch (err) {
+      setNotice('Failed to submit support request.');
+    }
+  }
+
   async function uploadPdf(event, scope = 'reference') {
     const file = event.target.files?.[0];
     if (!file) return;
-    setLoading(true);
-    setNotice('');
+    setLoading('upload');
+    setNotice('Uploading and extracting text from PDF...');
     const form = new FormData();
     form.append('file', file);
     try {
@@ -175,8 +211,8 @@ function App() {
     event.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
-    setLoading(true);
-    setNotice('');
+    setLoading('upload');
+    setNotice('Fetching URL content...');
     try {
       const response = await fetch(`${API_BASE}/add-url`, {
         method: 'POST',
@@ -218,6 +254,7 @@ function App() {
 
   async function clearChats() {
     if (loading) return;
+    setLoading('clear');
     try {
       const response = await fetch(`${API_BASE}/chats`, { method: 'DELETE' });
       if (!response.ok) throw new Error(await response.text());
@@ -233,6 +270,8 @@ function App() {
       ]);
     } catch (error) {
       setNotice(`Could not clear chats: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -321,9 +360,9 @@ function App() {
 
         <div className="messages">
           {messages.map((message, index) => (
-            <Message message={message} key={index} />
+            <Message message={message} key={index} onSupport={submitToSupport} />
           ))}
-          {loading && (
+          {loading === 'chat' && (
             <article className="message assistant">
               <div className="avatar">AI</div>
               <div className="bubble loading">Checking documents, rules, and sources...</div>

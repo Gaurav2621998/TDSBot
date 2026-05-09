@@ -569,3 +569,42 @@ input {
 [data-theme="dark"] .attachment-chip button:hover {
   color: #c9d1d9;
 }
+
+.support-escalation {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color, #e0e0e0);
+}
+
+.support-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #2fb67d;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.support-button:hover {
+  opacity: 0.9;
+}
+
+.support-submitted {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #2fb67d;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+[data-theme='dark'] .support-escalation {
+  border-top-color: #30363d;
+}
